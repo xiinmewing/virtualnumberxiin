@@ -2,16 +2,24 @@ const { Telegraf } = require('telegraf');
 const axios = require('axios');
 
 // ============ KONFIGURASI ============
-const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || '8741266761:AAHPLsEhJJ_kokafEBAOh2cD2zt97ncuV10';
-const API_KEY = process.env.API_KEY || 'ISI_API_KEY'; // opsional
+// Semua konfigurasi dari environment variables (aman)
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const API_KEY = process.env.API_KEY || ''; // boleh kosong
 const API_BASE = 'https://opxotp.vercel.app/api/otp';
 
-// ============ FUNGSI API ============
+// ============ FUNGSI API DENGAN LOGGING ============
 async function callApi(endpoint, method = 'GET', payload = null) {
   const url = `${API_BASE}?endpoint=${endpoint}`;
-  const headers = { 'Content-Type': 'application/json' };
-  
+  const headers = {
+    'Content-Type': 'application/json'
+  };
+  // Hanya tambahkan mauthapi jika API_KEY terisi
+  if (API_KEY && API_KEY !== '') {
+    headers['mauthapi'] = API_KEY;
+  }
+
   try {
+    console.log(`[API] ${method} ${url}`, payload ? JSON.stringify(payload) : '');
     const response = await axios({
       method,
       url,
@@ -19,28 +27,35 @@ async function callApi(endpoint, method = 'GET', payload = null) {
       data: payload,
       timeout: 15000
     });
+    console.log('[API Response]', JSON.stringify(response.data));
     return response.data;
   } catch (error) {
-    console.error('API Error:', error.message);
-    return { error: error.message };
+    console.error('[API Error]', error.response?.data || error.message);
+    return { error: error.response?.data?.message || error.message };
   }
 }
 
 async function getNumber() {
   const result = await callApi('getnum');
-  if (result && result.data) return result.data;
+  if (result && result.data && result.data.phone) {
+    return result.data;
+  }
   return null;
 }
 
 async function getOtp(phone) {
   const result = await callApi('success-otp', 'POST', { phone });
-  if (result && result.data) return result.data;
+  if (result && result.data && result.data.otp) {
+    return result.data;
+  }
   return null;
 }
 
 async function getConsole() {
   const result = await callApi('console');
-  if (result && result.data) return result.data;
+  if (result && result.data && Array.isArray(result.data)) {
+    return result.data;
+  }
   return null;
 }
 
@@ -77,7 +92,7 @@ bot.help((ctx) => ctx.reply(`
 1. /getnum – dapatkan nomor virtual
 2. /otp 628xxx – cek kode OTP
 3. /console – lihat log
-` , { parse_mode: 'Markdown' }));
+`, { parse_mode: 'Markdown' }));
 
 // /getnum
 bot.command('getnum', async (ctx) => {
@@ -85,7 +100,7 @@ bot.command('getnum', async (ctx) => {
   const data = await getNumber();
   if (data && data.phone) {
     const msg = `
-✅ *Nomor:*
+✅ *Nomor berhasil didapat!*
 📞 \`${data.phone}\`
 🌍 ${data.country || 'Unknown'}
 ⏳ Kadaluarsa: ${data.expires_in || '15 menit'}
@@ -93,7 +108,7 @@ bot.command('getnum', async (ctx) => {
     `;
     return ctx.reply(msg, { parse_mode: 'Markdown' });
   } else {
-    return ctx.reply('❌ Gagal ambil nomor. Coba lagi nanti.');
+    return ctx.reply('❌ Gagal ambil nomor. Cek log Vercel untuk detail error.');
   }
 });
 
@@ -115,7 +130,7 @@ bot.command('otp', async (ctx) => {
     `;
     return ctx.reply(msg, { parse_mode: 'Markdown' });
   } else {
-    return ctx.reply(`❌ Tidak ada OTP untuk \`${phone}\`. Pastikan nomor aktif.`, { parse_mode: 'Markdown' });
+    return ctx.reply(`❌ Tidak ada OTP untuk \`${phone}\`. Pastikan nomor aktif (baru diambil dengan /getnum) dan belum kadaluarsa.`, { parse_mode: 'Markdown' });
   }
 });
 
@@ -124,7 +139,7 @@ bot.command('console', async (ctx) => {
   await ctx.reply('⏳ Mengambil log...');
   const logs = await getConsole();
   if (logs && logs.length > 0) {
-    const last = logs.slice(-10).map(l => `${l.time} - ${l.message}`).join('\n');
+    const last = logs.slice(-10).map(l => `${l.time || '?'} - ${l.message || '-'}`).join('\n');
     return ctx.reply(`📋 *Console (10 terakhir):*\n\`\`\`\n${last}\n\`\`\``, { parse_mode: 'Markdown' });
   } else {
     return ctx.reply('📭 Belum ada aktivitas.');
@@ -145,23 +160,20 @@ bot.action('console', (ctx) => {
   ctx.reply('➡️ Ketik /console');
 });
 
-// Default untuk pesan teks (bisa dikirim nomor langsung)
+// Menangani pesan teks (jika user kirim nomor langsung)
 bot.on('text', async (ctx) => {
   const text = ctx.message.text.trim();
-  // Jika hanya angka (kemungkinan nomor) dan panjang > 8
   if (/^[\+\d\-]+$/.test(text) && text.replace(/[\+\-]/g, '').length >= 8) {
-    // panggil /otp dengan nomor itu
     ctx.message.text = `/otp ${text}`;
     return bot.handleUpdate(ctx.update);
   }
-  // selain itu ignore
 });
 
-// Ekspor bot untuk Vercel (handler webhook)
+// Ekspor untuk Vercel
 module.exports = bot;
 
-// Jika dijalankan langsung (development polling)
+// Jika dijalankan lokal (polling)
 if (process.env.NODE_ENV !== 'production') {
   bot.launch();
-  console.log('Bot running in polling mode...');
+  console.log('🤖 Bot running in polling mode...');
 }
